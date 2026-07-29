@@ -1,11 +1,11 @@
 import os
+import re
 from anthropic import Anthropic
 from dotenv import load_dotenv
 import json
 
 load_dotenv()
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate
 from reportlab.pdfgen import canvas as pdf_canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.utils import *
@@ -17,60 +17,88 @@ client = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 def draw_box(c, th, x, y, w, h, title, text):
     y_flipped = th - y -h
     c.rect(x, y_flipped, w, h) 
-    c.setFont("Helvetica-Bold", 8)
+    c.setFont("Helvetica-Bold", 7)
     c.drawString(x + 2, y_flipped + h - 6, title)
-    c.setFont("Helvetica", 7)
-    c.drawString(x + 2, y_flipped + h - 12, text or "")
+    c.setFont("Helvetica", 5.5)
 
+    text = text or ""
+    words = text.split()
+    line = ""
+    line_y = y_flipped + h - 14
+    max_chars = int(w / 2.5)  
+    for word in words:
+        candidate = f"{line} {word}".strip()
+        if len(candidate) > max_chars:
+            c.drawString(x + 2, line_y, line)
+            line = word
+            line_y -= 6.5
+            if line_y < y_flipped + 2:
+                break
+        else:
+            line = candidate
+    if line and line_y >= y_flipped + 2:
+        c.drawString(x + 2, line_y, line)
 
 def create_slc_pdf(canvas_data, pdf_name="Social_lean_canvas.pdf"):
     page_size = landscape(A4)
+    page_width, page_height = page_size
     c = pdf_canvas.Canvas(pdf_name, pagesize=page_size)
-    page_height = page_size[1]
-
-    # Row 1: Top Row (Purpose & Impact)
+ 
+    # Row 1: Purpose & Impact
     draw_box(c, page_height, 10, 18, 137, 28, "Purpose", canvas_data.get("purpose"))
-    draw_box(c, page_height, 150, 18, 137, 28, "Impact", canvas_data.get("impact"))
-
-    # Rows 2 & 3: Main Canvas Grid
+    draw_box(c, page_height, 150, 18, 177, 28, "Impact", canvas_data.get("impact"))
+ 
+    # Rows 2 & 3: Main grid
     col_w = 55.4
+    cust_w = col_w + 40
     top_y = 48
     h_full = 104
     h_half = 50.5
-
-    #problem
+ 
     draw_box(c, page_height, 10, top_y, col_w, h_full, "Problem", canvas_data.get("problem"))
-    #solution
     draw_box(c, page_height, 10 + col_w + 1, top_y, col_w, h_half, "Solution", canvas_data.get("solution"))
-    #key metrics
     draw_box(c, page_height, 10 + col_w + 1, top_y + h_half + 3, col_w, h_half, "Key Metrics", canvas_data.get("key_metrics"))
-    #UVP
-    draw_box(c, page_height, 10 + (col_w * 2) + 2, top_y, col_w, h_full, "Unique Value Proposition", canvas_data.get("unique_value_proposition"))
-    #UA
-    draw_box(c, page_height, 10 + (col_w * 3) + 3, top_y, col_w, h_half, "Unfair Advantage", canvas_data.get("unfair_advantage"))
-    #channels
+    draw_box(c, page_height, 10 + (col_w * 2) + 2, top_y, col_w, h_full, "UVP", canvas_data.get("unique_value_proposition"))
+    draw_box(c, page_height, 10 + (col_w * 3) + 3, top_y, col_w, h_half, "UA", canvas_data.get("unfair_advantage"))
     draw_box(c, page_height, 10 + (col_w * 3) + 3, top_y + h_half + 3, col_w, h_half, "Channels", canvas_data.get("channels"))
-    #customer segment
-    draw_box(c, page_height, 10 + (col_w * 4) + 4, top_y, col_w, h_full, "Customer Segments", canvas_data.get("customer_segments"))
-
-    # Row 4: Bottom Row
+    draw_box(c, page_height, 10 + (col_w * 4) + 4, top_y, cust_w, h_full, "Customer Segments", canvas_data.get("customer_segments"))
+ 
+    # Row 4: Bottom row
     bottom_y = 155
     bottom_w = 137
+    cust_bottom_w = bottom_w + 40
     bottom_h = 42
-
-    #cost structure
+ 
     draw_box(c, page_height, 10, bottom_y, bottom_w, bottom_h, "Cost Structure", canvas_data.get("cost_structure"))
-    #revenue
-    draw_box(c, page_height, 150, bottom_y, bottom_w, bottom_h, "Revenue", canvas_data.get("revenue"))
-
+    draw_box(c, page_height, 150, bottom_y, cust_bottom_w, bottom_h, "Revenue", canvas_data.get("revenue"))
+ 
     c.save()
     print(f"\nPDF saved as {pdf_name}")
+
+def extract_json(reply_text):
+    # Strip markdown code fences if present
+    cleaned = re.sub(r"```json|```", "", reply_text).strip()
+ 
+    # Try a straight parse first (fast path)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+ 
+    # Fall back to finding the outermost {...} block
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+    return None
 
 def run_chat():
     print('You: (type exit to quit)')
     system_message = """You are the social lean canvas agent - salco, your are an energetic and thrilled assistent that helps people with their social lean canvas
     your job is to create a social lean canvas based on the user's deliverables and put each delevirable in their coordinated place
-    your goal is to get the user to send you his deliverables for the social lean canvas by asking them nicely and kindly 
+    your goal is to get the user to send you his deliverables for the social lean canvas by asking them nicely and kindly, then create a pdf file and add all the deliverables into it
 
     always make sure to talk in a nice warm and profissional tone that is king energetic and with a passion for helping
     always expect the next from the delivrables:
@@ -106,7 +134,7 @@ def run_chat():
 
         response = client.messages.create(
             model='claude-haiku-4-5-20251001',
-            max_tokens=300,
+            max_tokens=1500,
             temperature=0.7,
             system=system_message,
             messages=history
@@ -115,17 +143,10 @@ def run_chat():
         reply = response.content[0].text
         print(f'Claude: {reply}')
         history.append({'role': 'assistant', 'content': reply})
-        try:
-            cleaned_reply = reply.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-            canvas_data_dict = json.loads(cleaned_reply)
-            
+
+        canvas_data_dict = extract_json(reply)
+        if canvas_data_dict:
             print("\nSuccessfully generated dictionary! Creating PDF...")
-            create_slc_pdf(canvas_data_dict, pdf_name="Social_lean_canvas.pdf")
-            
-        except json.JSONDecodeError:
-            pass
-
-        
-
+            create_slc_pdf(canvas_data_dict, pdf_name="Social_lean_canvas.pdf")    
 
 run_chat()
